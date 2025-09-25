@@ -1,0 +1,66 @@
+# Hexagon Backend .gitignore
+
+# ----------------------
+# OS / Editor files
+# ----------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ----------------------
+# Environments / Secrets
+# ----------------------
+.env
+.env.*
+*.key
+*.pem
+*.crt
+.python-version
+.venv/
+venv/
+env/
+
+# Google OAuth client secrets (do NOT commit)
+client_secret_*.json
+
+# ----------------------
+# Python artifacts
+# ----------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Testing / type-checking / tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+coverage.xml
+htmlcov/
+
+# ----------------------
+# Databases / state
+# ----------------------
+*.db
+*.sqlite
+*.sqlite3
+instance/
+
+# ----------------------
+# Logs
+# ----------------------
+*.log
+logs/
+
+
