@@ -1,0 +1,8 @@
+fastapi==0.115.2
+uvicorn[standard]==0.31.1
+python-socketio==5.11.4
+python-engineio==4.10.1
+motor==3.6.0
+requests==2.32.3
+PyJWT==2.9.0
+pydantic==2.9.2

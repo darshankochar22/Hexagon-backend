@@ -1,8 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import socketio
 
-from .routers import auth, users, webrtc
+from .routers import auth, users, polls
 
 app = FastAPI(title="Hexagon API")
 
@@ -16,11 +15,7 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(users.router, prefix="/users", tags=["users"])
-app.include_router(webrtc.router, prefix="/webrtc", tags=["webrtc"])
-
-# Add Socket.IO to the app
-sio = webrtc.get_socket_server()
-socket_app = socketio.ASGIApp(sio, app)
+app.include_router(polls.router, prefix="/polls", tags=["polls"])
 
 @app.get("/")
 def root():

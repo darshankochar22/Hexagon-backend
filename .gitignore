@@ -3,6 +3,7 @@
 # ----------------------
 # OS / Editor files
 # ----------------------
+.gitignore
 .DS_Store
 Thumbs.db
 .idea/
