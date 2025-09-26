@@ -426,8 +426,18 @@ async def llm_chat(payload: dict):
         local_insights_tail = payload.get("local_insights_tail")
 
         system_preamble = (
-            "You are an expert technical interviewer. Use the provided job description "
-            "and the candidate's resume to give helpful, concrete, and structured responses."
+            "You are an expert technical interviewer conducting a real-time interview. "
+            "You have access to real-time visual analysis of the candidate including:\n"
+            "- Video analysis: body language, emotions, engagement level, professionalism\n"
+            "- Screen analysis: technical skills demonstration, problem-solving approach\n"
+            "- Behavioral insights: communication clarity, focus, preparation\n\n"
+            "Use this real-time analysis along with the job description and resume to:\n"
+            "1. Acknowledge what you observe about their performance\n"
+            "2. Provide targeted feedback and coaching\n"
+            "3. Ask follow-up questions based on their behavior\n"
+            "4. Give specific, actionable advice for improvement\n"
+            "5. Reference specific observations from the visual analysis\n\n"
+            "Be direct but supportive in your feedback. Help them improve their interview performance in real-time."
         )
 
         job_context = json.dumps(selected_job, ensure_ascii=False, indent=2) if selected_job else "None"
@@ -528,3 +538,230 @@ async def llm_chat(payload: dict):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM chat failed: {str(e)}")
+
+
+@router.post("/initialize-interviewer")
+async def initialize_interviewer(request: Dict[str, Any]):
+    """
+    Initialize AI interviewer session
+    """
+    try:
+        job_description = request.get("job_description", "")
+        job_title = request.get("job_title", "")
+        job_company = request.get("job_company", "")
+        job_skills = request.get("job_skills", [])
+        resume_base64 = request.get("resume_base64")
+        user_id = request.get("user_id", "anonymous")
+
+        # Extract resume text if provided
+        resume_text = ""
+        if resume_base64:
+            try:
+                resume_bytes = base64.b64decode(resume_base64)
+                pdf_reader = PyPDF2.PdfReader(io.BytesIO(resume_bytes))
+                resume_text = "\n".join([page.extract_text() for page in pdf_reader.pages])
+            except Exception as e:
+                print(f"Failed to extract resume text: {e}")
+
+        # Create system prompt for AI interviewer
+        system_prompt = """You are an experienced technical interviewer conducting a 30-minute interview. Your role is to:
+
+1. Ask exactly 5 tailored questions based on the job description and candidate's resume
+2. Keep responses short and specific (1-2 sentences max)
+3. Create a conversational flow
+4. Focus on technical skills, experience, and cultural fit
+5. Ask questions one by one dynamically based on responses
+6. Be professional but friendly
+7. Adapt questions based on candidate's behavior and responses
+
+You will be asked to generate questions one at a time during the interview.
+Each question should be tailored to the specific role and candidate profile.
+Questions should be appropriate for 30-second responses."""
+
+        # Build context
+        job_context = f"""
+Job Title: {job_title}
+Company: {job_company}
+Required Skills: {', '.join(job_skills) if job_skills else 'Not specified'}
+Job Description: {job_description[:2000]}
+"""
+
+        resume_context = ""
+        if resume_text:
+            resume_context = f"""
+Candidate Resume (first 3000 chars):
+{resume_text[:3000]}
+"""
+
+        prompt = f"""{system_prompt}
+
+Job Context:
+{job_context}
+
+{resume_context}
+
+You are now ready to conduct the interview. Provide a welcoming message to the candidate.
+"""
+
+        # Call Gemini
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+
+        response_text = response.text or ""
+        
+        return {
+            "ai_response": response_text or f"Hello! I'm your AI interviewer for the {job_title} position at {job_company}. I'll be asking you 5 questions today, each with a 30-second time limit. Let's begin!"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize interviewer: {str(e)}")
+
+
+@router.post("/generate-next-question")
+async def generate_next_question(request: Dict[str, Any]):
+    """
+    Generate the next interview question dynamically
+    """
+    try:
+        job_description = request.get("job_description", "")
+        job_title = request.get("job_title", "")
+        job_company = request.get("job_company", "")
+        job_skills = request.get("job_skills", [])
+        resume_base64 = request.get("resume_base64")
+        user_id = request.get("user_id", "anonymous")
+        current_question_index = request.get("current_question_index", 0)
+        total_questions = request.get("total_questions", 5)
+        previous_questions = request.get("previous_questions", [])
+        llm_insights = request.get("llm_insights", [])
+
+        # Extract resume text if provided
+        resume_text = ""
+        if resume_base64:
+            try:
+                resume_bytes = base64.b64decode(resume_base64)
+                pdf_reader = PyPDF2.PdfReader(io.BytesIO(resume_bytes))
+                resume_text = "\n".join([page.extract_text() for page in pdf_reader.pages])
+            except Exception as e:
+                print(f"Failed to extract resume text: {e}")
+
+        # Create system prompt for dynamic question generation
+        system_prompt = f"""You are an experienced technical interviewer conducting a 30-minute interview. 
+
+Current Status:
+- Question {current_question_index + 1} of {total_questions}
+- Previous questions asked: {previous_questions}
+
+Your task is to generate the next question that:
+1. Is tailored to the job role and candidate profile
+2. Builds on previous questions (don't repeat)
+3. Tests different aspects (technical, behavioral, cultural)
+4. Can be answered in 30 seconds
+5. Is appropriate for the candidate's experience level
+6. Considers any behavioral insights from video/audio analysis
+
+Question categories to cover:
+- Technical skills and experience
+- Problem-solving abilities
+- Cultural fit and motivation
+- Career goals and growth
+- Specific job-related scenarios
+
+Generate a single, focused question with a brief AI response."""
+
+        # Build context
+        job_context = f"""
+Job Title: {job_title}
+Company: {job_company}
+Required Skills: {', '.join(job_skills) if job_skills else 'Not specified'}
+Job Description: {job_description[:2000]}
+"""
+
+        resume_context = ""
+        if resume_text:
+            resume_context = f"""
+Candidate Resume (first 3000 chars):
+{resume_text[:3000]}
+"""
+
+        insights_context = ""
+        if llm_insights:
+            insights_context = f"""
+Recent Behavioral Insights:
+{json.dumps(llm_insights, indent=2)}
+"""
+
+        prompt = f"""{system_prompt}
+
+Job Context:
+{job_context}
+
+{resume_context}
+
+{insights_context}
+
+Generate the next interview question. Format your response as JSON:
+{{
+  "question": "Your question here",
+  "category": "Technical/Behavioral/Cultural/Motivational",
+  "ai_response": "Brief AI response or transition"
+}}"""
+
+        # Call Gemini
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+
+        response_text = response.text or ""
+        
+        # Try to parse JSON response
+        try:
+            # Extract JSON from response if it's wrapped in markdown
+            if "```json" in response_text:
+                json_start = response_text.find("```json") + 7
+                json_end = response_text.find("```", json_start)
+                json_text = response_text[json_start:json_end].strip()
+            else:
+                json_text = response_text.strip()
+            
+            parsed_response = json.loads(json_text)
+            
+            # Ensure we have the right structure
+            if "question" not in parsed_response:
+                # Fallback questions based on index
+                fallback_questions = [
+                    "Tell me about yourself and your relevant experience for this role.",
+                    f"What interests you most about the {job_title} position at {job_company}?",
+                    "Describe a challenging project you've worked on recently and how you overcame obstacles.",
+                    "How do you stay updated with the latest technologies and trends in your field?",
+                    "Where do you see yourself in 5 years, and how does this role fit into your career goals?"
+                ]
+                
+                parsed_response = {
+                    "question": fallback_questions[current_question_index] if current_question_index < len(fallback_questions) else "Do you have any questions for us about the role or company?",
+                    "category": "General",
+                    "ai_response": "Let's continue with the next question."
+                }
+            
+            return parsed_response
+            
+        except json.JSONDecodeError:
+            # Fallback if JSON parsing fails
+            fallback_questions = [
+                "Tell me about yourself and your relevant experience for this role.",
+                f"What interests you most about the {job_title} position at {job_company}?",
+                "Describe a challenging project you've worked on recently and how you overcame obstacles.",
+                "How do you stay updated with the latest technologies and trends in your field?",
+                "Where do you see yourself in 5 years, and how does this role fit into your career goals?"
+            ]
+            
+            return {
+                "question": fallback_questions[current_question_index] if current_question_index < len(fallback_questions) else "Do you have any questions for us about the role or company?",
+                "category": "General",
+                "ai_response": "Let's continue with the next question."
+            }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate next question: {str(e)}")
