@@ -4,15 +4,14 @@ import PyPDF2
 import io
 import json
 from typing import Dict, Any
-import google.generativeai as genai
+from google import genai
 import os
 
 router = APIRouter()
 
-# Configure Gemini
+# Configure Gemini (new SDK per docs)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "your-gemini-api-key")
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+client = genai.Client(api_key=GEMINI_API_KEY)  # https://ai.google.dev/gemini-api/docs
 
 async def extract_text_from_pdf(pdf_file: bytes) -> str:
     """Extract text from PDF file"""
@@ -48,7 +47,10 @@ async def analyze_job_description(job_text: str) -> Dict[str, Any]:
         Format as JSON.
         """
         
-        response = await gemini_model.generate_content_async(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
         
         try:
             analysis = json.loads(response.text)
@@ -90,7 +92,10 @@ async def analyze_resume(resume_text: str) -> Dict[str, Any]:
         Format as JSON.
         """
         
-        response = await gemini_model.generate_content_async(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
         
         try:
             analysis = json.loads(response.text)
@@ -132,7 +137,10 @@ async def generate_interview_questions(job_analysis: Dict[str, Any], resume_anal
         Format as JSON with each question having: question, category, difficulty, expected_answer_focus
         """
         
-        response = await gemini_model.generate_content_async(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
         
         try:
             questions = json.loads(response.text)

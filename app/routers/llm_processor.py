@@ -5,19 +5,17 @@ import base64
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
-import google.generativeai as genai
+from google import genai
 import os
 from PIL import Image
 import io
+import PyPDF2
 
 router = APIRouter()
 
-# Gemini Configuration
+# Gemini Client (new SDK per docs)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "your-gemini-api-key")
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Initialize Gemini model - using 2.5 Flash for best performance
-gemini_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+client = genai.Client(api_key=GEMINI_API_KEY)  # https://ai.google.dev/gemini-api/docs
 
 # WebSocket connection manager for LLM processing
 class LLMConnectionManager:
@@ -172,11 +170,19 @@ Keep response concise and actionable. Format as JSON with these fields:
 - engagement: level of engagement (1-10)
 - concerns: any red flags or concerns"""
 
-        # Call Gemini Vision API
-        response = await gemini_model.generate_content_async([
-            prompt,
-            image
-        ])
+        # Call Gemini API (new client) with inline image (compressed as PNG)
+        image_b64 = base64.b64encode(image_data).decode('utf-8')
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/png", "data": image_b64}}
+                    ]
+                }
+            ]
+        )
         
         analysis_text = response.text
         
@@ -269,11 +275,19 @@ Format as JSON with these fields:
 - concerns: any red flags or concerns
 - recommendations: specific improvement suggestions"""
 
-        # Call Gemini Vision API
-        response = await gemini_model.generate_content_async([
-            prompt,
-            image
-        ])
+        # Call Gemini API (new client) with inline image (compressed as PNG)
+        image_b64 = base64.b64encode(image_data).decode('utf-8')
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/png", "data": image_b64}}
+                    ]
+                }
+            ]
+        )
         
         analysis_text = response.text
         
@@ -384,3 +398,133 @@ async def list_llm_sessions():
         })
     
     return {"sessions": sessions, "total_sessions": len(sessions)}
+
+# ---------------------------------------------
+# Chat Completions with Context (Job + Resume)
+# ---------------------------------------------
+@router.post("/llm/chat")
+async def llm_chat(payload: dict):
+    """Chat endpoint that incorporates job description and resume context.
+
+    Expected JSON body:
+    {
+      "messages": [{"role": "user"|"assistant"|"system", "content": "..."}, ...],
+      "selected_job": { id, title, company, location, experience, skills, description } | null,
+      "all_jobs": [ ...optional reduced list... ],
+      "resume_meta": { filename, uploaded_at, file_size, content_type } | null,
+      "resume_file_base64": "..." | null
+    }
+    """
+    try:
+        messages = payload.get("messages", [])
+        selected_job = payload.get("selected_job")
+        all_jobs = payload.get("all_jobs", [])
+        resume_meta = payload.get("resume_meta")
+        resume_b64 = payload.get("resume_file_base64")
+        session_id = payload.get("session_id")
+        session_insights_from_client = payload.get("session_insights")
+        local_insights_tail = payload.get("local_insights_tail")
+
+        system_preamble = (
+            "You are an expert technical interviewer. Use the provided job description "
+            "and the candidate's resume to give helpful, concrete, and structured responses."
+        )
+
+        job_context = json.dumps(selected_job, ensure_ascii=False, indent=2) if selected_job else "None"
+        jobs_summary = json.dumps(all_jobs[:10], ensure_ascii=False, indent=2) if all_jobs else "[]"
+
+        resume_note = "Resume not provided."
+        resume_text = None
+        if resume_b64:
+            resume_note = f"Resume provided: {resume_meta.get('filename') if resume_meta else 'unknown filename'}"
+            try:
+                resume_bytes = base64.b64decode(resume_b64)
+                content_type = (resume_meta or {}).get('content_type', '')
+                if 'pdf' in content_type.lower() or (resume_meta and str(resume_meta.get('filename','')).lower().endswith('.pdf')):
+                    # Extract text from PDF
+                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(resume_bytes))
+                    text_parts = []
+                    for page in pdf_reader.pages:
+                        try:
+                            text_parts.append(page.extract_text() or '')
+                        except Exception:
+                            continue
+                    extracted = "\n".join([t for t in text_parts if t])
+                    resume_text = extracted.strip() if extracted else None
+                else:
+                    # Non-PDF resumes: pass a short note; for DOC/DOCX consider adding python-docx support later
+                    resume_text = None
+            except Exception:
+                resume_text = None
+
+        # Build prompt
+        # Incorporate latest visual insights (video/screen) if present for session
+        visual_context = ""
+        try:
+            # Prefer server-side session store
+            if session_id and session_id in llm_manager.llm_sessions:
+                sess = llm_manager.llm_sessions.get(session_id, {})
+                video_tail = (sess.get("video_analysis") or [])[-3:]
+                screen_tail = (sess.get("screen_analysis") or [])[-3:]
+            else:
+                # Fallback to client-provided snapshot
+                video_tail = ((session_insights_from_client or {}).get("video_analyses") or [])[-3:]
+                screen_tail = ((session_insights_from_client or {}).get("screen_analyses") or [])[-3:]
+
+            # Keep only lightweight fields
+            def slim(items: list):
+                out = []
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    out.append({
+                        "type": it.get("type"),
+                        "timestamp": it.get("timestamp"),
+                        "analysis": it.get("analysis"),
+                        "insights": it.get("insights"),
+                    })
+                return out
+
+            # Merge any local (blue box) insights tail to maximize coverage
+            try:
+                if isinstance(local_insights_tail, list) and local_insights_tail:
+                    screen_tail = (screen_tail or []) + [i for i in local_insights_tail if i.get("type") == "screen_analysis"]
+                    video_tail = (video_tail or []) + [i for i in local_insights_tail if i.get("type") == "video_analysis"]
+            except Exception:
+                pass
+
+            if video_tail or screen_tail:
+                visual_context = (
+                    "Recent Visual Insights (last few):\n" +
+                    json.dumps({
+                        "video": slim(video_tail),
+                        "screen": slim(screen_tail)
+                    }, ensure_ascii=False, indent=2) + "\n\n"
+                )
+        except Exception:
+            visual_context = ""
+        prompt = (
+            f"System:\n{system_preamble}\n\n"
+            f"Selected Job (JSON):\n{job_context}\n\n"
+            f"Other Jobs (first 10, JSON):\n{jobs_summary}\n\n"
+            f"Resume Meta: {json.dumps(resume_meta or {}, ensure_ascii=False)}\n"
+            f"Resume Status: {resume_note}\n\n"
+            + (f"Resume Text (extracted from PDF):\n{resume_text[:5000]}\n\n" if resume_text else "")
+            + visual_context
+            + "Conversation so far:\n" +
+            "\n".join([f"{m.get('role','user').title()}: {m.get('content','')}" for m in messages]) +
+            "\n\nRespond succinctly, cite specific skills/experience from resume when relevant, "
+            "and align guidance to the selected job requirements."
+        )
+
+        # Call Gemini with optional resume image context
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+
+        text = response.text or ""
+        return {"reply": text}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM chat failed: {str(e)}")
