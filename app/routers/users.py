@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from typing import Optional
 import jwt
+import base64
+import os
+from datetime import datetime
 from ..core.db import get_db
 
 JWT_SECRET = "dev-secret-change"
@@ -20,6 +23,7 @@ class ProfileUpdate(BaseModel):
     location: Optional[str] = None
     website: Optional[str] = None
     phone: Optional[str] = None
+    resume: Optional[str] = None
 
 
 def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)):
@@ -55,6 +59,7 @@ async def me(user: str = Depends(get_current_user), db=Depends(get_db)):
             "location": user_data.get("location", ""),
             "website": user_data.get("website", ""),
             "phone": user_data.get("phone", ""),
+            "resume": user_data.get("resume", ""),
         }
     }
 
@@ -82,6 +87,8 @@ async def update_profile(
         update_fields["website"] = profile_data.website
     if profile_data.phone is not None:
         update_fields["phone"] = profile_data.phone
+    if profile_data.resume is not None:
+        update_fields["resume"] = profile_data.resume
     
     if not update_fields:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -116,5 +123,107 @@ async def update_profile(
             "location": updated_user.get("location", ""),
             "website": updated_user.get("website", ""),
             "phone": updated_user.get("phone", ""),
+            "resume": updated_user.get("resume", ""),
         }
     }
+
+
+@router.post("/upload-resume")
+async def upload_resume(
+    file: UploadFile = File(...),
+    user: str = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """Upload resume file for the current user"""
+    
+    # Check file type
+    if not file.filename.lower().endswith(('.pdf', '.doc', '.docx')):
+        raise HTTPException(status_code=400, detail="Only PDF, DOC, and DOCX files are allowed")
+    
+    # Check file size (max 10MB)
+    file_content = await file.read()
+    if len(file_content) > 10 * 1024 * 1024:  # 10MB
+        raise HTTPException(status_code=400, detail="File size too large. Maximum size is 10MB")
+    
+    try:
+        # Convert file to base64 for storage
+        file_base64 = base64.b64encode(file_content).decode('utf-8')
+        
+        # Create resume data
+        resume_data = {
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "file_size": len(file_content),
+            "uploaded_at": datetime.utcnow().isoformat(),
+            "file_data": file_base64
+        }
+        
+        # Update user document with resume
+        result = await db.users.update_one(
+            {"username": user},
+            {"$set": {"resume": resume_data}}
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return {
+            "message": "Resume uploaded successfully",
+            "filename": file.filename,
+            "file_size": len(file_content),
+            "uploaded_at": resume_data["uploaded_at"]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error uploading resume: {str(e)}")
+
+
+@router.get("/download-resume")
+async def download_resume(
+    user: str = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """Download the current user's resume"""
+    
+    user_data = await db.users.find_one({"username": user})
+    if not user_data:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    resume_data = user_data.get("resume")
+    if not resume_data:
+        raise HTTPException(status_code=404, detail="No resume found")
+    
+    try:
+        # Decode base64 file data
+        file_content = base64.b64decode(resume_data["file_data"])
+        
+        from fastapi.responses import Response
+        
+        return Response(
+            content=file_content,
+            media_type=resume_data["content_type"],
+            headers={
+                "Content-Disposition": f"attachment; filename={resume_data['filename']}"
+            }
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error downloading resume: {str(e)}")
+
+
+@router.delete("/delete-resume")
+async def delete_resume(
+    user: str = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """Delete the current user's resume"""
+    
+    result = await db.users.update_one(
+        {"username": user},
+        {"$unset": {"resume": ""}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {"message": "Resume deleted successfully"}
