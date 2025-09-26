@@ -12,4 +12,4 @@ google-generativeai==0.3.2
 PyPDF2==3.0.1
 gTTS==2.4.0
 pydub==0.25.1
-pydantic==2.5.0
+openai-whisper==20231117

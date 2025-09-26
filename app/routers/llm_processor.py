@@ -1,4 +1,4 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 import json
 import base64
@@ -10,12 +10,32 @@ import os
 from PIL import Image
 import io
 import PyPDF2
+import whisper
+import tempfile
+from motor.motor_asyncio import AsyncIOMotorClient
+from datetime import datetime
 
 router = APIRouter()
 
 # Gemini Client (new SDK per docs)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "your-gemini-api-key")
 client = genai.Client(api_key=GEMINI_API_KEY)  # https://ai.google.dev/gemini-api/docs
+
+# Whisper model for Speech-to-Text
+whisper_model = None
+
+def get_whisper_model():
+    global whisper_model
+    if whisper_model is None:
+        print("Loading Whisper model...")
+        whisper_model = whisper.load_model("small")
+        print("Whisper model loaded successfully!")
+    return whisper_model
+
+# Database connection
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+client_db = AsyncIOMotorClient(MONGODB_URL)
+db = client_db.hexagon_interviews
 
 # WebSocket connection manager for LLM processing
 class LLMConnectionManager:
@@ -426,18 +446,27 @@ async def llm_chat(payload: dict):
         local_insights_tail = payload.get("local_insights_tail")
 
         system_preamble = (
-            "You are an expert technical interviewer conducting a real-time interview. "
+            "You are a friendly, professional technical interviewer conducting a real-time interview. "
             "You have access to real-time visual analysis of the candidate including:\n"
             "- Video analysis: body language, emotions, engagement level, professionalism\n"
             "- Screen analysis: technical skills demonstration, problem-solving approach\n"
             "- Behavioral insights: communication clarity, focus, preparation\n\n"
-            "Use this real-time analysis along with the job description and resume to:\n"
-            "1. Acknowledge what you observe about their performance\n"
-            "2. Provide targeted feedback and coaching\n"
-            "3. Ask follow-up questions based on their behavior\n"
-            "4. Give specific, actionable advice for improvement\n"
-            "5. Reference specific observations from the visual analysis\n\n"
-            "Be direct but supportive in your feedback. Help them improve their interview performance in real-time."
+            "INTERVIEW CONDUCT GUIDELINES:\n"
+            "1. Be warm, encouraging, and supportive - comfort the candidate\n"
+            "2. Ask ONE question at a time - don't overwhelm them\n"
+            "3. Acknowledge their responses positively before moving on\n"
+            "4. Provide gentle, constructive feedback when needed\n"
+            "5. Keep the atmosphere professional but friendly\n"
+            "6. Use their name when possible to create connection\n\n"
+            "FEEDBACK APPROACH:\n"
+            "- Acknowledge what you observe about their performance\n"
+            "- Provide targeted, encouraging feedback and coaching\n"
+            "- Give specific, actionable advice for improvement\n"
+            "- Reference specific observations from the visual analysis\n"
+            "- Always end with encouragement or next steps\n\n"
+            "CRITICAL: Keep ALL responses to MAXIMUM 50 words. Be concise, direct, and impactful. "
+            "Be friendly, supportive, and ask only one question at a time. "
+            "Help them feel comfortable while improving their interview performance."
         )
 
         job_context = json.dumps(selected_job, ensure_ascii=False, indent=2) if selected_job else "None"
@@ -523,8 +552,8 @@ async def llm_chat(payload: dict):
             + visual_context
             + "Conversation so far:\n" +
             "\n".join([f"{m.get('role','user').title()}: {m.get('content','')}" for m in messages]) +
-            "\n\nRespond succinctly, cite specific skills/experience from resume when relevant, "
-            "and align guidance to the selected job requirements."
+            "\n\nIMPORTANT: Respond in MAXIMUM 50 words. Be concise, direct, and impactful. "
+            "Cite specific skills/experience from resume when relevant, and align guidance to the selected job requirements."
         )
 
         # Call Gemini with optional resume image context
@@ -765,3 +794,162 @@ Generate the next interview question. Format your response as JSON:
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate next question: {str(e)}")
+
+
+@router.post("/speech-to-text")
+async def speech_to_text(audio: UploadFile = File(...)):
+    """
+    Convert speech to text using Whisper
+    """
+    try:
+        # Get the Whisper model
+        model = get_whisper_model()
+        
+        # Save uploaded audio to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+            content = await audio.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Transcribe the audio
+            result = model.transcribe(temp_file_path)
+            transcribed_text = result["text"].strip()
+            
+            return {
+                "text": transcribed_text,
+                "language": result.get("language", "en"),
+                "confidence": "high"  # Whisper doesn't provide confidence scores directly
+            }
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+                
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Speech-to-text processing failed: {str(e)}")
+
+
+@router.post("/generate-interview-summary")
+async def generate_interview_summary(request: Dict[str, Any]):
+    """
+    Generate detailed interview summary and store in database
+    """
+    try:
+        user_id = request.get("user_id", "anonymous")
+        session_id = request.get("session_id")
+        job_title = request.get("job_title", "")
+        job_company = request.get("job_company", "")
+        interview_questions = request.get("interview_questions", [])
+        llm_insights = request.get("llm_insights", [])
+        chat_history = request.get("chat_history", [])
+        
+        # Create comprehensive interview summary using LLM
+        system_prompt = """You are an expert HR professional creating a detailed interview summary. 
+        You must provide a COMPREHENSIVE, HONEST, and DETAILED assessment of the candidate.
+        
+        Include ALL observations about the candidate - both positive and negative aspects.
+        Be completely transparent about their performance, behavior, and suitability.
+        
+        Structure your response as a detailed interview report covering:
+        1. Overall Performance Assessment
+        2. Technical Skills Evaluation  
+        3. Communication & Presentation
+        4. Professionalism & Behavior
+        5. Strengths & Weaknesses
+        6. Specific Concerns or Red Flags
+        7. Recommendation for Hiring
+        8. Areas for Improvement
+        9. Cultural Fit Assessment
+        10. Final Verdict
+        
+        Be brutally honest about any issues, concerns, or red flags observed.
+        This is for internal HR use - be completely transparent."""
+
+        # Build context for summary generation
+        insights_context = ""
+        if llm_insights:
+            insights_context = f"""
+            Real-time Analysis Data:
+            {json.dumps(llm_insights[-10:], indent=2)}
+            """
+
+        questions_context = ""
+        if interview_questions:
+            questions_context = f"""
+            Interview Questions Asked:
+            {json.dumps(interview_questions, indent=2)}
+            """
+
+        conversation_context = ""
+        if chat_history:
+            conversation_context = f"""
+            Interview Conversation:
+            {json.dumps(chat_history[-20:], indent=2)}
+            """
+
+        prompt = f"""{system_prompt}
+
+        Job Position: {job_title} at {job_company}
+        
+        {questions_context}
+        
+        {conversation_context}
+        
+        {insights_context}
+        
+        Generate a comprehensive, honest interview summary report.
+        """
+
+        # Call Gemini for detailed summary
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+
+        summary_text = response.text or "No summary generated"
+        
+        # Store in database
+        interview_record = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "job_title": job_title,
+            "job_company": job_company,
+            "interview_date": datetime.now(),
+            "questions_asked": interview_questions,
+            "llm_insights": llm_insights,
+            "chat_history": chat_history,
+            "detailed_summary": summary_text,
+            "created_at": datetime.now()
+        }
+        
+        # Insert into database
+        result = await db.interview_summaries.insert_one(interview_record)
+        
+        return {
+            "summary": summary_text,
+            "interview_id": str(result.inserted_id),
+            "message": "Interview summary generated and stored successfully"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate interview summary: {str(e)}")
+
+
+@router.get("/interview-summaries/{user_id}")
+async def get_interview_summaries(user_id: str):
+    """
+    Get all interview summaries for a user
+    """
+    try:
+        summaries = []
+        async for summary in db.interview_summaries.find({"user_id": user_id}).sort("created_at", -1):
+            summary["_id"] = str(summary["_id"])
+            summaries.append(summary)
+        
+        return {"summaries": summaries}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch interview summaries: {str(e)}")
