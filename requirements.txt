@@ -1,5 +1,5 @@
 fastapi==0.115.2
-uvicorn[standard]==0.31.1
+uvicorn==0.31.1
 python-socketio==5.11.4
 python-engineio==4.10.1
 motor==3.6.0
@@ -13,3 +13,5 @@ PyPDF2==3.0.1
 gTTS==2.4.0
 pydub==0.25.1
 openai-whisper==20231117
+python-dotenv==1.0.0
+numpy==1.24.3

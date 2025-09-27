@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import List, Dict, Any
 from google import genai
 import os
-from PIL import Image
-import io
+import cv2
+import numpy as np
 import PyPDF2
 import whisper
 import tempfile
@@ -173,7 +173,8 @@ async def analyze_video_frame(frame_data: str, session_id: str, timestamp: str =
     try:
         # Decode base64 image
         image_data = base64.b64decode(frame_data)
-        image = Image.open(io.BytesIO(image_data))
+        nparr = np.frombuffer(image_data, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         # Prepare prompt for Gemini
         prompt = """Analyze this interview video frame and provide insights on:
@@ -276,7 +277,8 @@ async def analyze_screen_share(screen_data: str, session_id: str, timestamp: str
     try:
         # Decode base64 image
         image_data = base64.b64decode(screen_data)
-        image = Image.open(io.BytesIO(image_data))
+        nparr = np.frombuffer(image_data, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         # Prepare prompt for Gemini
         prompt = """Analyze this screen share from an interview and provide insights on:
@@ -805,8 +807,17 @@ async def speech_to_text(audio: UploadFile = File(...)):
         # Get the Whisper model
         model = get_whisper_model()
         
+        # Determine file extension based on content type
+        content_type = audio.content_type or "audio/wav"
+        if "webm" in content_type:
+            suffix = ".webm"
+        elif "mp4" in content_type:
+            suffix = ".mp4"
+        else:
+            suffix = ".wav"
+        
         # Save uploaded audio to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             content = await audio.read()
             temp_file.write(content)
             temp_file_path = temp_file.name
