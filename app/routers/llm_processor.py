@@ -19,7 +19,10 @@ router = APIRouter()
 
 # Gemini Client (new SDK per docs)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "your-gemini-api-key")
-client = genai.Client(api_key=GEMINI_API_KEY)  # https://ai.google.dev/gemini-api/docs
+genai.configure(api_key=GEMINI_API_KEY)  # https://ai.google.dev/gemini-api/docs
+
+# Initialize Gemini model
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 # Whisper model for Speech-to-Text
 whisper_model = None
@@ -193,17 +196,13 @@ Keep response concise and actionable. Format as JSON with these fields:
 
         # Call Gemini API (new client) with inline image (compressed as PNG)
         image_b64 = base64.b64encode(image_data).decode('utf-8')
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {"inline_data": {"mime_type": "image/png", "data": image_b64}}
-                    ]
-                }
-            ]
-        )
+        response = model.generate_content([
+            prompt,
+            {
+                "mime_type": "image/png",
+                "data": image_b64
+            }
+        ])
         
         analysis_text = response.text
         
@@ -299,17 +298,13 @@ Format as JSON with these fields:
 
         # Call Gemini API (new client) with inline image (compressed as PNG)
         image_b64 = base64.b64encode(image_data).decode('utf-8')
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {"inline_data": {"mime_type": "image/png", "data": image_b64}}
-                    ]
-                }
-            ]
-        )
+        response = model.generate_content([
+            prompt,
+            {
+                "mime_type": "image/png",
+                "data": image_b64
+            }
+        ])
         
         analysis_text = response.text
         
@@ -559,10 +554,7 @@ async def llm_chat(payload: dict):
         )
 
         # Call Gemini with optional resume image context
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
+        response = model.generate_content(prompt)
 
         text = response.text or ""
         return {"reply": text}
@@ -635,10 +627,7 @@ You are now ready to conduct the interview. Provide a welcoming message to the c
 """
 
         # Call Gemini
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
+        response = model.generate_content(prompt)
 
         response_text = response.text or ""
         
@@ -740,10 +729,7 @@ Generate the next interview question. Format your response as JSON:
 }}"""
 
         # Call Gemini
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
+        response = model.generate_content(prompt)
 
         response_text = response.text or ""
         
@@ -916,10 +902,7 @@ async def generate_interview_summary(request: Dict[str, Any]):
         """
 
         # Call Gemini for detailed summary
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
+        response = model.generate_content(prompt)
 
         summary_text = response.text or "No summary generated"
         
