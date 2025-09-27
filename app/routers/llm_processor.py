@@ -5,7 +5,7 @@ import base64
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
-from google import genai
+import google.generativeai as genai
 import os
 import cv2
 import numpy as np
