@@ -1,37 +1,18 @@
-<<<<<<< HEAD
-fastapi==0.104.1
-uvicorn==0.24.0
-python-socketio==5.8.0
-python-engineio==4.7.1
-motor==3.3.2
-requests==2.31.0
-PyJWT==2.8.0
-python-multipart==0.0.6
-aiofiles==23.2.1
-opencv-python-headless==4.8.1.78
-=======
 fastapi==0.115.2
 uvicorn==0.31.1
+python-socketio==5.11.4
+python-engineio==4.10.1
 motor==3.6.0
 requests==2.32.3
 PyJWT==2.9.0
+python-multipart==0.0.6
 aiofiles==23.2.1
-dotenv
-python-dotenv==1.0.0
 opencv-python==4.8.1.78
->>>>>>> 6e21fd6157f7bc1500aecfc5c67297da7a693416
 google-generativeai==0.3.2
 PyPDF2==3.0.1
-python-multipart
 pydub==0.25.1
-<<<<<<< HEAD
 openai-whisper==20231117
 python-dotenv==1.0.0
 pydantic==1.10.13
-numpy==1.24.3
-=======
 numpy>=1.26.0,<1.27
-python-socketio==5.11.4
-python-engineio==4.10.1
-Pillow==9.5.0
->>>>>>> 6e21fd6157f7bc1500aecfc5c67297da7a693416
+
