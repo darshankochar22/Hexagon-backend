@@ -13,4 +13,5 @@ PyPDF2==3.0.1
 pydub==0.25.1
 python-dotenv==1.0.0
 numpy>=1.26.0,<1.27
+git+https://github.com/openai/whisper.git
 
