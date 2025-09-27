@@ -14,4 +14,5 @@ pydub==0.25.1
 numpy>=1.26.0,<1.27
 python-socketio==5.11.4
 python-engineio==4.10.1
-
+Pillow
+PIL
